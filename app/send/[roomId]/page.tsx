@@ -6,6 +6,7 @@ import { distanceMeters } from '@/lib/geo';
 
 const DELTA_THRESHOLD_M = 1.5;
 const MAX_AGE_MS = 500;
+const MAX_STALE_MS = 5000;
 
 export default function SenderPage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -15,6 +16,8 @@ export default function SenderPage() {
   const [copied, setCopied] = useState(false);
   const watchRef = useRef<number | null>(null);
   const lastPos = useRef<{ lat: number; lng: number } | null>(null);
+  const lastSentAt = useRef(0);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const kalmanLat = useRef(new KalmanFilter());
   const kalmanLng = useRef(new KalmanFilter());
 
@@ -31,6 +34,34 @@ export default function SenderPage() {
     }, 5000);
     return () => clearInterval(id);
   }, [roomId]);
+
+  const requestWakeLock = async () => {
+    if (!('wakeLock' in navigator)) return;
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request('screen');
+      wakeLockRef.current.addEventListener('release', () => {
+        wakeLockRef.current = null;
+      });
+    } catch (err) {
+      console.error('Wake lock failed', err);
+    }
+  };
+
+  useEffect(() => {
+    if (!tracking) return;
+    void requestWakeLock();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      wakeLockRef.current?.release();
+      wakeLockRef.current = null;
+    };
+  }, [tracking]);
 
   const sendLocation = async (
     lat: number,
@@ -60,12 +91,14 @@ export default function SenderPage() {
         const rawLng = pos.coords.longitude;
         const lat = kalmanLat.current.filter(rawLat);
         const lng = kalmanLng.current.filter(rawLng);
+        const now = Date.now();
 
         if (lastPos.current) {
           const d = distanceMeters(lastPos.current.lat, lastPos.current.lng, lat, lng);
-          if (d < DELTA_THRESHOLD_M) return;
+          if (d < DELTA_THRESHOLD_M && now - lastSentAt.current < MAX_STALE_MS) return;
         }
         lastPos.current = { lat, lng };
+        lastSentAt.current = now;
         setCoords(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
         sendLocation(lat, lng, pos.coords.accuracy,
           pos.coords.speed ?? 0, pos.coords.heading ?? 0);
@@ -84,6 +117,7 @@ export default function SenderPage() {
     kalmanLat.current.reset();
     kalmanLng.current.reset();
     lastPos.current = null;
+    lastSentAt.current = 0;
   };
 
   const sendStatic = () => {
@@ -91,6 +125,8 @@ export default function SenderPage() {
       (pos) => {
         sendLocation(pos.coords.latitude, pos.coords.longitude,
           pos.coords.accuracy, 0, 0, true);
+        lastSentAt.current = Date.now();
+        lastPos.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         alert('Static location pinned!');
       },
       () => alert('Could not get location'),
