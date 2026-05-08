@@ -8,9 +8,9 @@ const VIEWER_TTL_SECONDS = 14400;
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { roomId: string } }
+  { params }: { params: Promise<{ roomId: string }> }
 ) {
-  const { roomId } = params;
+  const { roomId } = await params;
   const encoder = new TextEncoder();
   const viewerKey = `viewers:${roomId}`;
 

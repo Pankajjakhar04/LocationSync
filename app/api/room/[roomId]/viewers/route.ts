@@ -1,11 +1,12 @@
 import { kv } from '@vercel/kv';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(
-  _req: Request,
-  { params }: { params: { roomId: string } }
+  _req: NextRequest,
+  { params }: { params: Promise<{ roomId: string }> }
 ) {
-  const raw = await kv.get<number | string>(`viewers:${params.roomId}`);
+  const { roomId } = await params;
+  const raw = await kv.get<number | string>(`viewers:${roomId}`);
   const count = typeof raw === 'number'
     ? raw
     : raw
